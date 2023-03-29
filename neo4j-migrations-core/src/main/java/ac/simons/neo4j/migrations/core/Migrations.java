@@ -35,6 +35,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -82,10 +83,26 @@ public final class Migrations {
 
 	@SuppressWarnings("squid:S3077")
 	private volatile List<Migration> resolvedMigrations;
+	private volatile boolean hasOnlyUpMigrations;
 	@SuppressWarnings("squid:S3077")
 	private volatile Map<LifecyclePhase, List<Callback>> resolvedCallbacks;
 
 	private final AtomicBoolean beforeFirstUseHasBeenCalled = new AtomicBoolean(false);
+
+	enum MigrationFilter {
+		/**
+		 * Retrieve all migrations
+		 */
+		ALL,
+		/**
+		 * Forward only.
+		 */
+		FORWARD_ONLY,
+		/**
+		 * Undo only.
+		 */
+		UNDO_ONLY
+	}
 
 	/**
 	 * Creates a {@link Migrations migrations instance} ready to used with the given configuration over the connection
@@ -106,6 +123,19 @@ public final class Migrations {
 	}
 
 	private List<Migration> getMigrations() {
+		return getMigrations(MigrationFilter.FORWARD_ONLY);
+	}
+
+	private Map<String, Migration> getUndoMigrations() {
+		return getMigrations(MigrationFilter.UNDO_ONLY)
+			.stream().collect(Collectors.toMap(m -> m.getVersion().getValue(), Function.identity()));
+	}
+
+	/**
+	 * @param filter The filter to apply when returning the migrations
+	 * @return The list of migrations filtered by {@code migrationFilter}
+	 */
+	private List<Migration> getMigrations(MigrationFilter filter) {
 
 		List<Migration> availableMigrations = this.resolvedMigrations;
 		if (availableMigrations == null) {
@@ -113,11 +143,23 @@ public final class Migrations {
 				availableMigrations = this.resolvedMigrations;
 				if (availableMigrations == null) {
 					this.resolvedMigrations = discoveryService.findMigrations(this.context);
+					this.hasOnlyUpMigrations = this.resolvedMigrations.stream().map(Migration::isUndo).distinct().noneMatch(Boolean::booleanValue);
 					availableMigrations = this.resolvedMigrations;
 				}
 			}
 		}
-		return availableMigrations;
+
+		if (filter == MigrationFilter.ALL || hasOnlyUpMigrations && filter == MigrationFilter.FORWARD_ONLY) {
+			return availableMigrations;
+		} else if (hasOnlyUpMigrations && filter == MigrationFilter.UNDO_ONLY) {
+			return List.of();
+		} else {
+			Predicate<Migration> predicate = Migration::isUndo;
+			if (filter == MigrationFilter.FORWARD_ONLY) {
+				predicate = predicate.negate();
+			}
+			return availableMigrations.stream().filter(predicate).toList();
+		}
 	}
 
 	private Map<LifecyclePhase, List<Callback>> getCallbacks() {
@@ -170,7 +212,7 @@ public final class Migrations {
 	 */
 	public MigrationChain info() {
 
-		return executeWithinLock(() -> chainBuilder.buildChain(context, this.getMigrations()),
+		return executeWithinLock(() -> chainBuilder.buildChain(context, this.getMigrations(), getUndoMigrations()),
 			LifecyclePhase.BEFORE_INFO, LifecyclePhase.AFTER_INFO);
 	}
 
@@ -185,9 +227,11 @@ public final class Migrations {
 	 */
 	public MigrationChain info(ChainBuilderMode mode) {
 
-		return executeWithinLock(() -> chainBuilder.buildChain(context, this.getMigrations(), false, mode),
+		return executeWithinLock(() -> chainBuilder.buildChain(context, this.getMigrations(), getUndoMigrations(), false, mode),
 			LifecyclePhase.BEFORE_INFO, LifecyclePhase.AFTER_INFO);
 	}
+
+
 
 	/**
 	 * Applies all discovered Neo4j migrations. Migrations can either be classes implementing {@link JavaBasedMigration}
@@ -475,6 +519,7 @@ public final class Migrations {
 			if (migrations.isEmpty()) {
 				throw new MigrationsException("Zero migrations have been discovered and repairing the database would lead to the deletion of all migrations recorded; if you want that, use the clean operation");
 			}
+			Map<String, Migration> undoMigrations = getUndoMigrations();
 
 			var validationResult = validate0();
 			if (validationResult.isValid() || validationResult.getOutcome() == Outcome.INCOMPLETE_DATABASE) {
@@ -482,8 +527,8 @@ public final class Migrations {
 			}
 
 			var nonVerifyingChainBuilder = new ChainBuilder(false);
-			MigrationChain remoteChain = nonVerifyingChainBuilder.buildChain(context, migrations, true, ChainBuilderMode.REMOTE);
-			MigrationChain localChain = nonVerifyingChainBuilder.buildChain(context, migrations, true, ChainBuilderMode.LOCAL);
+			MigrationChain remoteChain = nonVerifyingChainBuilder.buildChain(context, migrations, undoMigrations, true, ChainBuilderMode.REMOTE);
+			MigrationChain localChain = nonVerifyingChainBuilder.buildChain(context, migrations, undoMigrations, true, ChainBuilderMode.LOCAL);
 
 			var chainTool = new ChainTool(migrations, localChain, remoteChain);
 			var nodesDeleted = 0L;
@@ -533,7 +578,7 @@ public final class Migrations {
 		List<Migration> migrations = this.getMigrations();
 		Optional<String> targetDatabase = config.getOptionalSchemaDatabase();
 		try {
-			MigrationChain migrationChain = new ChainBuilder(true).buildChain(context, migrations, true, ChainBuilderMode.COMPARE);
+			MigrationChain migrationChain = new ChainBuilder(true).buildChain(context, migrations, getUndoMigrations(), true, ChainBuilderMode.COMPARE);
 			int numberOfAppliedMigrations = (int) migrationChain.getElements()
 				.stream().filter(m -> m.getState() == MigrationState.APPLIED)
 				.count();
@@ -708,7 +753,7 @@ public final class Migrations {
 		MigrationVersion previousVersion = getLastAppliedVersion().orElseGet(MigrationVersion::baseline);
 
 		// Validate and build the chain of migrations
-		MigrationChain chain = chainBuilder.buildChain(context, migrations);
+		MigrationChain chain = chainBuilder.buildChain(context, migrations, getUndoMigrations());
 
 		StopWatch stopWatch = new StopWatch();
 		for (Migration migration : migrations) {

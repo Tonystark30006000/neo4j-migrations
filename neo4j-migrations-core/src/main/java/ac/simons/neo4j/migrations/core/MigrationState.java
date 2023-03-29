@@ -30,5 +30,10 @@ public enum MigrationState {
 	/**
 	 * A migration already applied
 	 */
-	APPLIED
+	APPLIED,
+	/**
+	 * A migration that has been undone.
+	 * @since TBA
+	 */
+	UNDONE
 }

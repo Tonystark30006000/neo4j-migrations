@@ -30,9 +30,9 @@ import java.util.regex.Pattern;
 public final class MigrationVersion {
 
 	private static final String BASELINE_VALUE = "BASELINE";
-	private static final MigrationVersion BASELINE = new MigrationVersion(BASELINE_VALUE, null, false);
+	private static final MigrationVersion BASELINE = new MigrationVersion(BASELINE_VALUE, null, false, false);
 	@SuppressWarnings("squid:S5843") // This is a fine regex
-	static final Pattern VERSION_PATTERN = Pattern.compile("(?<type>[VR])(?<version>\\d+(?:_\\d+)*+|\\d+(?:\\.\\d+)*+)__(?<name>[\\w ]+)(?:\\.(?<ext>\\w+))?");
+	static final Pattern VERSION_PATTERN = Pattern.compile("(?<type>[VRU])(?<version>\\d+(?:_\\d+)*+|\\d+(?:\\.\\d+)*+)__(?<name>[\\w ]+)(?:\\.(?<ext>\\w+))?");
 
 	private final String value;
 	private final String description;
@@ -41,6 +41,11 @@ public final class MigrationVersion {
 	 * @since 1.13.3
 	 */
 	private final boolean repeatable;
+	/**
+	 * A flag indicating that this version refers to an undo-migration for the migration with the same version.
+	 * @since TBA
+	 */
+	private final boolean undo;
 
 	/**
 	 * @param pathOrUrl A string representing either a path or an URL.
@@ -70,8 +75,10 @@ public final class MigrationVersion {
 			throw new MigrationsException("Invalid class name for a migration: " + name);
 		}
 
-		boolean repeatable = "R".equalsIgnoreCase(matcher.group("type"));
-		return new MigrationVersion(matcher.group("version").replace("_", "."), matcher.group("name").replace("_", " "), repeatable);
+		var type = matcher.group("type");
+		boolean repeatable = "R".equalsIgnoreCase(type);
+		boolean undoMigration = "U".equalsIgnoreCase(type);
+		return new MigrationVersion(matcher.group("version").replace("_", "."), matcher.group("name").replace("_", " "), repeatable, undoMigration);
 	}
 
 	/**
@@ -96,7 +103,7 @@ public final class MigrationVersion {
 		if (BASELINE_VALUE.equals(value)) {
 			return MigrationVersion.baseline();
 		}
-		return new MigrationVersion(value, description, repeatable);
+		return new MigrationVersion(value, description, repeatable, false);
 	}
 
 	static MigrationVersion baseline() {
@@ -104,10 +111,11 @@ public final class MigrationVersion {
 		return BASELINE;
 	}
 
-	private MigrationVersion(String value, String description, boolean repeatable) {
+	private MigrationVersion(String value, String description, boolean repeatable, boolean undo) {
 		this.value = value;
 		this.description = description;
 		this.repeatable = repeatable;
+		this.undo = undo;
 	}
 
 	/**
@@ -123,6 +131,14 @@ public final class MigrationVersion {
 	 */
 	boolean isRepeatable() {
 		return repeatable;
+	}
+
+	/**
+	 * @return {@literal true} if this version is a down migration version.
+	 * @since TBA
+	 */
+	boolean isUndo() {
+		return undo;
 	}
 
 	/**
@@ -146,12 +162,12 @@ public final class MigrationVersion {
 			return false;
 		}
 		MigrationVersion that = (MigrationVersion) o;
-		return value.equals(that.value);
+		return undo == that.undo && value.equals(that.value);
 	}
 
 	@Override
 	public int hashCode() {
-		return Objects.hash(value);
+		return Objects.hash(value, undo);
 	}
 
 	static class VersionComparator implements Comparator<MigrationVersion> {

@@ -37,7 +37,7 @@ final class DefaultMigrationChainElement implements MigrationChain.Element {
 	record InstallationInfo(ZonedDateTime installedOn, String installedBy, Duration executionTime) {
 	}
 
-	static MigrationChain.Element appliedElement(Path.Segment appliedMigration, List<Relationship> repetitions) {
+	static MigrationChain.Element appliedElement(Path.Segment appliedMigration, List<Relationship> repetitions,  Map<String, Migration> undoMigrations) {
 
 		Node targetMigration = appliedMigration.end();
 		Map<String, Object> properties = targetMigration.asMap();
@@ -54,16 +54,17 @@ final class DefaultMigrationChainElement implements MigrationChain.Element {
 		Duration executionTime = Duration.ofSeconds(storedExecutionTime.seconds())
 			.plusNanos(storedExecutionTime.nanoseconds());
 
+		var version = (String) properties.get("version");
 		return new DefaultMigrationChainElement(MigrationState.APPLIED,
 			MigrationType.valueOf((String) properties.get("type")), migrationProperties.get("checksum").asString((String) properties.get("checksum")),
-			(String) properties.get("version"), (String) properties.get("description"),
-			(String) properties.get("source"), new InstallationInfo(installedOn, installedBy, executionTime));
+			version, (String) properties.get("description"),
+			(String) properties.get("source"), new InstallationInfo(installedOn, installedBy, executionTime), undoMigrations.containsKey(version));
 	}
 
-	static MigrationChain.Element pendingElement(Migration pendingMigration) {
+	static MigrationChain.Element pendingElement(Migration pendingMigration, boolean undoable) {
 		return new DefaultMigrationChainElement(MigrationState.PENDING, Migrations.getMigrationType(pendingMigration),
 			pendingMigration.getChecksum().orElse(null), pendingMigration.getVersion().getValue(),
-			pendingMigration.getOptionalDescription().orElse(null), pendingMigration.getSource(), null);
+			pendingMigration.getOptionalDescription().orElse(null), pendingMigration.getSource(), null, undoable);
 	}
 
 	private final MigrationState state;
@@ -80,8 +81,10 @@ final class DefaultMigrationChainElement implements MigrationChain.Element {
 
 	private final InstallationInfo installationInfo;
 
+	private final boolean undoable;
+
 	private DefaultMigrationChainElement(MigrationState state, MigrationType type, String checksum,
-		String version, String description, String source, InstallationInfo installationInfo) {
+		String version, String description, String source, InstallationInfo installationInfo, boolean undoable) {
 		this.state = state;
 		this.type = type;
 		this.checksum = checksum;
@@ -89,6 +92,7 @@ final class DefaultMigrationChainElement implements MigrationChain.Element {
 		this.description = description;
 		this.source = source;
 		this.installationInfo = installationInfo;
+		this.undoable = undoable;
 	}
 
 	@Override
@@ -134,6 +138,11 @@ final class DefaultMigrationChainElement implements MigrationChain.Element {
 	@Override
 	public Optional<Duration> getExecutionTime() {
 		return Optional.ofNullable(installationInfo).map(InstallationInfo::executionTime);
+	}
+
+	@Override
+	public boolean undoable() {
+		return undoable;
 	}
 
 	@Override

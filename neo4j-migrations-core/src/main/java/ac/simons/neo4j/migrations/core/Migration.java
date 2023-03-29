@@ -60,4 +60,12 @@ public sealed interface Migration permits AbstractCypherBasedMigration, Migratio
 	 * @since 2.0.0
 	 */
 	boolean isRepeatable();
+
+	/**
+	 * @return {@literal true} if this migration is the undo or "down" migration for a migration with the same {@link #getVersion()}
+	 * @since TBA
+	 */
+	default boolean isUndo() {
+		return getVersion().isUndo();
+	}
 }

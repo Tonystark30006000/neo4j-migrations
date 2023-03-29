@@ -153,5 +153,11 @@ public sealed interface MigrationChain extends ConnectionDetails permits Default
 		 * @return The execution time of this migration. (Only for applied migrations)
 		 */
 		Optional<Duration> getExecutionTime();
+
+		/**
+		 * @return {@literal true} if there is an undo migration that can be used to undo this element
+		 * @since TBA
+		 */
+		boolean undoable();
 	}
 }

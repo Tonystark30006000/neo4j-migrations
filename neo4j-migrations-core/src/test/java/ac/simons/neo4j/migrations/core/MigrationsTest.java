@@ -20,10 +20,14 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.lang.reflect.InvocationTargetException;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
+import org.junit.platform.commons.util.ReflectionUtils;
+import org.mockito.Mockito;
 import org.neo4j.driver.Driver;
 
 /**
@@ -57,5 +61,47 @@ class MigrationsTest {
 
 		Migrations migrations = new Migrations(MigrationsConfig.defaultConfig(), mock(Driver.class));
 		assertThatIllegalArgumentException().isThrownBy(() -> migrations.delete(null)).withMessage("A valid version must be passed to the delete operation");
+	}
+
+	@Test // GH-706
+	void shouldOptimizeAllMigrations() throws InvocationTargetException, IllegalAccessException {
+
+		var migrations = new Migrations(MigrationsConfig.builder()
+			.withLocationsToScan(
+				"classpath:my/awesome/migrations/moreStuff"
+			)
+			.build(), Mockito.mock(Driver.class));
+
+		var getMigrations = ReflectionUtils.findMethod(Migrations.class, "getMigrations", Migrations.MigrationFilter.class)
+			.orElseThrow();
+		getMigrations.setAccessible(true);
+
+		var all = getMigrations.invoke(migrations, Migrations.MigrationFilter.ALL);
+		var forward = getMigrations.invoke(migrations, Migrations.MigrationFilter.FORWARD_ONLY);
+		assertThat(all).isSameAs(forward);
+		var undo = getMigrations.invoke(migrations, Migrations.MigrationFilter.UNDO_ONLY);
+		assertThat(undo).isSameAs(List.of());
+	}
+
+	@SuppressWarnings("unchecked")
+	@Test // GH-706
+	void shouldOptimizeAllMigrationsWithDuplicates() throws InvocationTargetException, IllegalAccessException {
+
+		var migrations = new Migrations(MigrationsConfig.builder()
+			.withLocationsToScan(
+				"classpath:non-duplicate"
+			)
+			.build(), Mockito.mock(Driver.class));
+
+		var getMigrations = ReflectionUtils.findMethod(Migrations.class, "getMigrations", Migrations.MigrationFilter.class)
+			.orElseThrow();
+		getMigrations.setAccessible(true);
+
+		var all = (List<Migrations>) getMigrations.invoke(migrations, Migrations.MigrationFilter.ALL);
+		assertThat(all).hasSize(2);
+		var forward = (List<Migrations>) getMigrations.invoke(migrations, Migrations.MigrationFilter.FORWARD_ONLY);
+		assertThat(forward).hasSize(1);
+		var undo = (List<Migrations>) getMigrations.invoke(migrations, Migrations.MigrationFilter.UNDO_ONLY);
+		assertThat(undo).hasSize(1);
 	}
 }

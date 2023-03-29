@@ -56,11 +56,12 @@ final class ChainBuilder {
 	 * @param context              The current context
 	 * @param discoveredMigrations A list of migrations sorted by {@link Migration#getVersion()}.
 	 *                             It is not yet known whether those are pending or not.
+	 * @param undoMigrations       A map of possible undo migrations
 	 * @return The full migration chain.
-	 * @see #buildChain(MigrationContext, List, boolean, ChainBuilderMode)
+	 * @see #buildChain(MigrationContext, List, Map, boolean, ChainBuilderMode)
 	 */
-	MigrationChain buildChain(MigrationContext context, List<Migration> discoveredMigrations) {
-		return buildChain(context, discoveredMigrations, false, ChainBuilderMode.COMPARE);
+	MigrationChain buildChain(MigrationContext context, List<Migration> discoveredMigrations,  Map<String, Migration> undoMigrations) {
+		return buildChain(context, discoveredMigrations, undoMigrations, false, ChainBuilderMode.COMPARE);
 	}
 
 	/**
@@ -70,17 +71,17 @@ final class ChainBuilder {
 	 * @param detailedCauses       set to {@literal true} to add causes to possible exceptions
 	 * @return The full migration chain.
 	 */
-	MigrationChain buildChain(MigrationContext context, List<Migration> discoveredMigrations, boolean detailedCauses, ChainBuilderMode mode) {
+	MigrationChain buildChain(MigrationContext context, List<Migration> discoveredMigrations, Map<String, Migration> undoMigrations, boolean detailedCauses, ChainBuilderMode mode) {
 
-		final Map<MigrationVersion, Element> elements = buildChain0(context, discoveredMigrations, detailedCauses, mode);
+		final Map<MigrationVersion, Element> elements = buildChain0(context, discoveredMigrations, undoMigrations, detailedCauses, mode);
 		return new DefaultMigrationChain(context.getConnectionDetails(), elements);
 	}
 
 	@SuppressWarnings("squid:S3776") // Yep, this is a complex validation, but it still fits on one screen
-	private Map<MigrationVersion, Element> buildChain0(MigrationContext context, List<Migration> discoveredMigrations, boolean detailedCauses, ChainBuilderMode mode) {
+	private Map<MigrationVersion, Element> buildChain0(MigrationContext context, List<Migration> discoveredMigrations, Map<String, Migration> undoMigrations, boolean detailedCauses, ChainBuilderMode mode) {
 
 		Map<MigrationVersion, Element> appliedMigrations =
-			mode == ChainBuilderMode.LOCAL ? Collections.emptyMap() : getChainOfAppliedMigrations(context);
+			mode == ChainBuilderMode.LOCAL ? Collections.emptyMap() : getChainOfAppliedMigrations(context, undoMigrations);
 		if (mode == ChainBuilderMode.REMOTE) {
 			// Only looking at remote, assume everything is applied
 			return Collections.unmodifiableMap(appliedMigrations);
@@ -127,7 +128,7 @@ final class ChainBuilder {
 		// All remaining migrations are pending
 		while (i < discoveredMigrations.size()) {
 			Migration pendingMigration = discoveredMigrations.get(i++);
-			Element element = DefaultMigrationChainElement.pendingElement(pendingMigration);
+			Element element = DefaultMigrationChainElement.pendingElement(pendingMigration, undoMigrations.containsKey(pendingMigration.getVersion().getValue()));
 			fullMigrationChain.put(pendingMigration.getVersion(), element);
 		}
 
@@ -162,7 +163,7 @@ final class ChainBuilder {
 		}
 	}
 
-	private Map<MigrationVersion, Element> getChainOfAppliedMigrations(MigrationContext context) {
+	private Map<MigrationVersion, Element> getChainOfAppliedMigrations(MigrationContext context,  Map<String, Migration> undoMigrations) {
 
 		var query = """
 			MATCH p=(b:__Neo4jMigration {version:'BASELINE'}) - [r:MIGRATED_TO*] -> (l:__Neo4jMigration)
@@ -183,7 +184,7 @@ final class ChainBuilder {
 					Record row = result.single();
 					List<Relationship> repetitions = row.get("repetitions").asList(Value::asRelationship);
 					row.get("p").asPath().forEach(segment -> {
-						Element chainElement = DefaultMigrationChainElement.appliedElement(segment, repetitions);
+						Element chainElement = DefaultMigrationChainElement.appliedElement(segment, repetitions, undoMigrations);
 						chain.put(MigrationVersion.withValue(chainElement.getVersion(), segment.end().get("repeatable").asBoolean(false)), chainElement);
 					});
 				}

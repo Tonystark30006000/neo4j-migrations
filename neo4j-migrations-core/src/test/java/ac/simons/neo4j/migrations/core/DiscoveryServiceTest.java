@@ -16,6 +16,7 @@
 package ac.simons.neo4j.migrations.core;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNoException;
 
 import java.io.File;
 import java.io.IOException;
@@ -105,5 +106,19 @@ class DiscoveryServiceTest {
 			.hasSize(2)
 			.map(Callback::getSource)
 			.containsExactly("beforeFirstUse.cypher", "beforeFirstUse__anotherStep.cypher");
+	}
+
+	@Test // GH-706
+	void shouldAllowDoubleWhenDown() {
+
+		var context = new DefaultMigrationContext(MigrationsConfig.builder()
+			.withLocationsToScan(
+				"classpath:non-duplicate"
+			)
+			.build(), Mockito.mock(Driver.class));
+
+		var discoveryService = new DiscoveryService();
+		assertThatNoException()
+			.isThrownBy(() -> discoveryService.findMigrations(context));
 	}
 }
