@@ -4,7 +4,7 @@ Michael Simons <michael.simons@neo4j.com>
 :lang: en
 :listing-caption: Listing
 :source-highlighter: coderay
-:icons: font
+
 // tag::properties[]
 :fullVersion: 2.14.1
 :groupId: eu.michael-simons.neo4j
